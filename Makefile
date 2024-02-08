@@ -13,8 +13,7 @@ objects = main.o system_server.o web_server.o input.o gui.o
 .PHONY: clean
 
 $(TARGET): $(objects)
-	mkdir bin
-	$(CC) -o bin/$(TARGET) $(objects)
+	$(CC) -o $(TARGET) $(objects)
 
 main.o:  main.c
 	$(CC) -g $(INCLUDES) -c main.c
@@ -33,4 +32,4 @@ web_server.o: $(WEB_SERVER)/web_server.h $(WEB_SERVER)/web_server.c
 
 clean:
 	rm -rf *.o
-	rm -rf bin
+	rm -rf $(TARGET)

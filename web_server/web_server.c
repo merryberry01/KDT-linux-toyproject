@@ -7,20 +7,21 @@
 
 int create_web_server()
 {
-	pid_t systemPid;
+    pid_t systemPid;
 
-	printf("create_web_server: creating web server...\n");
+    printf("create_web_server: creating web server...\n");
 
-	switch(systemPid = fork()){
-		case 0:
-			if(execl("/usr/local/bin/filebrowser", "filebrowser", "-p", "8282", (char *)NULL) < 0)
-				perror("execl() from create_web_server()");
-			break;
-		case -1:
-			perror("fork() from create_web_server()");
-			break;
-		default:
-			break;
-	}
-	return systemPid;
+    switch (systemPid = fork()) {
+    case -1:
+        printf("fork failed\n");
+    case 0:
+        if (execl("/usr/local/bin/filebrowser", "filebrowser", "-p", "8282", (char *) NULL)) {
+            printf("execfailed\n");
+        }
+        break;
+    default:
+        break;
+    }
+
+    return 0;
 }
