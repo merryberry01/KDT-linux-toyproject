@@ -8,21 +8,34 @@
 
 int system_server()
 {
-    printf("system_server() called\n");
+	printf("system_server: system server is created\n");
 
-    while (1) {
-        sleep(1);
-    }
+	while (1) {
+		sleep(1);
+	}
 
-    return 0;
+	return 0;
 }
 
 int create_system_server()
 {
-    pid_t systemPid;
-    const char *name = "system_server";
+	pid_t systemPid;
+	const char *name = "system_server";
 
-    printf("create_system_server() called\n");
+	printf("create_system_server: creating system server...\n");
 
-    return 0;
+	switch(systemPid = fork()){
+	case 0:
+		if(prctl(PR_SET_NAME, (unsigned long) name) < 0)
+			perror("prctl() from create_system_server()");
+		system_server();
+		break;
+	case -1:
+		perror("fork() from create_system_server()");
+		break;
+	default:
+		break;
+	}
+
+	return systemPid;
 }

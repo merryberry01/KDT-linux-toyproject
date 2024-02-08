@@ -1,20 +1,36 @@
-OBJS = main.o system_server.o gui.o input.o web_server.o
-INCLUDES = -Isystem -Iui -Iweb_server
 TARGET = toy_system
 
-$(TARGET): $(OBJS)
+SYSTEM = ./system
+UI = ./ui
+WEB_SERVER = ./web_server
+
+INCLUDES = -I$(SYSTEM) -I$(UI) -I$(WEB_SERVER)
+
+CC = gcc
+
+objects = main.o system_server.o web_server.o input.o gui.o
+
+.PHONY: clean
+
+$(TARGET): $(objects)
 	mkdir bin
-	gcc -o bin/$(TARGET) ./*.o system/*.o ui/*.o web_server/*.o
-	make clean
-main.o:
-	gcc $(INCLUDES) -c -o main.o main.c
-system_server.o:
-	gcc $(INCLUDES) -c -o system/system_server.o system/system_server.c
-gui.o:
-	gcc $(INCLUDES) -c -o ui/gui.o ui/gui.c
-input.o:
-	gcc $(INCLUDES) -c -o ui/input.o ui/input.c
-web_server.o:
-	gcc $(INCLUDES) -c -o web_server/web_server.o web_server/web_server.c
+	$(CC) -o bin/$(TARGET) $(objects)
+
+main.o:  main.c
+	$(CC) -g $(INCLUDES) -c main.c
+
+system_server.o: $(SYSTEM)/system_server.h $(SYSTEM)/system_server.c
+	$(CC) -g $(INCLUDES) -c ./system/system_server.c
+
+gui.o: $(UI)/gui.h $(UI)/gui.c
+	$(CC) -g $(INCLUDES) -c $(UI)/gui.c
+
+input.o: $(UI)/input.h $(UI)/input.c
+	$(CC) -g $(INCLUDES) -c $(UI)/input.c
+
+web_server.o: $(WEB_SERVER)/web_server.h $(WEB_SERVER)/web_server.c
+	$(CC) -g $(INCLUDES) -c $(WEB_SERVER)/web_server.c
+
 clean:
-	rm -f ./*.o system/*.o ui/*.o web_server/*.o
+	rm -rf *.o
+	rm -rf bin
