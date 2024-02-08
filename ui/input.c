@@ -59,15 +59,19 @@ void segfault_handler(int sig_num, siginfo_t * info, void * ucontext) {
 
 int input()
 {
-    printf("input: input process created\n");
+	printf("input: input process created\n");
 
-    signal(SIGSEGV, segfault_handler);
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_flags = SA_SIGINFO | SA_RESTART;
+	sa.sa_sigaction = segfault_handler;
+	sigaction(SIGSEGV, &sa, NULL);
 
-    while (1) {
-        sleep(1);
-    }
+	while (1) {
+		sleep(1);
+	}
 
-    return 0;
+	return 0;
 }
 
 int create_input()
