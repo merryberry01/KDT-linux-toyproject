@@ -18,11 +18,10 @@ sigchldHandler(int sig)
 
     while ((childPid = waitpid(-1, &status, WNOHANG)) > 0) {
         printf("handler: Reaped child %ld - ", (long) childPid);
-        (NULL, status);
     }
 
     if (childPid == -1 && errno != ECHILD)
-        printf("waitpid");
+        perror("waitpid()");
 
     printf("handler: returning\n");
 

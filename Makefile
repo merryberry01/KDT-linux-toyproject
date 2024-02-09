@@ -13,7 +13,7 @@ objects = main.o system_server.o web_server.o input.o gui.o
 .PHONY: clean
 
 $(TARGET): $(objects)
-	$(CC) -o $(TARGET) $(objects) -lrt
+	$(CC) -o $(TARGET) $(objects) -lpthread
 
 main.o:  main.c
 	$(CC) -g $(INCLUDES) -c main.c
