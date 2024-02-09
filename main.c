@@ -9,8 +9,24 @@
 static void
 sigchldHandler(int sig)
 {
-	printf("handler: Caught SIGCHLD : %d\n", sig);
-	printf("handler: returning\n");
+    int status, savedErrno;
+    pid_t childPid;
+
+    savedErrno = errno;
+
+    printf("handler: Caught SIGCHLD : %d\n", sig);
+
+    while ((childPid = waitpid(-1, &status, WNOHANG)) > 0) {
+        printf("handler: Reaped child %ld - ", (long) childPid);
+        (NULL, status);
+    }
+
+    if (childPid == -1 && errno != ECHILD)
+        printf("waitpid");
+
+    printf("handler: returning\n");
+
+    errno = savedErrno;
 }
 
 int main()
@@ -21,16 +37,22 @@ int main()
     sigset_t blockMask, emptyMask;
     struct sigaction sa;
 
-    signal(SIGCHLD, sigchldHandler);
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sa.sa_handler = sigchldHandler;
+    if (sigaction(SIGCHLD, &sa, NULL) == -1) {
+        printf("sigaction");
+        return 0;
+    }
 
-    printf("main: main process started\n");
-    printf("main: create system server\n");
+    printf("메인 함수입니다.\n");
+    printf("시스템 서버를 생성합니다.\n");
     spid = create_system_server();
-    printf("main: create web server\n");
+    printf("웹 서버를 생성합니다.\n");
     wpid = create_web_server();
-    printf("main: create input process\n");
+    printf("입력 프로세스를 생성합니다.\n");
     ipid = create_input();
-    printf("main: create gui process\n");
+    printf("GUI를 생성합니다.\n");
     gpid = create_gui();
 
     waitpid(spid, &status, 0);

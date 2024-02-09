@@ -59,19 +59,23 @@ void segfault_handler(int sig_num, siginfo_t * info, void * ucontext) {
 
 int input()
 {
-	printf("input: input process created\n");
+    printf("나 input 프로세스!\n");
 
-	struct sigaction sa;
-	memset(&sa, 0, sizeof(sa));
-	sa.sa_flags = SA_SIGINFO | SA_RESTART;
-	sa.sa_sigaction = segfault_handler;
-	sigaction(SIGSEGV, &sa, NULL);
+    struct sigaction sa;
 
-	while (1) {
-		sleep(1);
-	}
+    memset(&sa, 0, sizeof(sigaction));
+    sigemptyset(&sa.sa_mask);
 
-	return 0;
+    sa.sa_flags = SA_RESTART | SA_SIGINFO;
+    sa.sa_sigaction = segfault_handler;
+
+    sigaction(SIGSEGV, &sa, NULL); /* ignore whether it works or not */
+
+    while (1) {
+        sleep(1);
+    }
+
+    return 0;
 }
 
 int create_input()
@@ -79,12 +83,14 @@ int create_input()
     pid_t systemPid;
     const char *name = "input";
 
-    printf("create_input: creating input process...\n");
+    printf("여기서 input 프로세스를 생성합니다.\n");
 
+    /* fork 를 이용하세요 */
     switch (systemPid = fork()) {
     case -1:
         printf("fork failed\n");
     case 0:
+        /* 프로세스 이름 변경 */
         if (prctl(PR_SET_NAME, (unsigned long) name) < 0)
             perror("prctl()");
         input();
