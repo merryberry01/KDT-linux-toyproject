@@ -74,15 +74,28 @@ void *monitor_thread(void* arg)
 
 void *disk_service_thread(void* arg)
 {
-    char *s = arg;
+	char *s = arg;
+	FILE* apipe;
+	char buf[1024];
+	char cmd[]="df -h ./" ;
 
-    printf("%s", s);
+	printf("%s", s);
 
-    while (1) {
-        posix_sleep_ms(5000);
+	while (1) {
+		/* popen 사용하여 10초마다 disk 잔여량 출력
+		* popen으로 shell을 실행하면 성능과 보안 문제가 있음
+		* 향후 파일 관련 시스템 콜 시간에 개선,
+		* 하지만 가끔 빠르게 테스트 프로그램 또는 프로토 타입 시스템 작성 시 유용
+		*/
+		if(!(apipe = popen(cmd, "r")))
+			perror("popen() from disk_service_thread()");
+		fread((void *)buf, 1, 1024, apipe);
+		printf("%s\n", buf);
+		pclose(apipe);
+
+		posix_sleep_ms(10000);
     }
-
-    return 0;
+	return 0;
 }
 
 void *camera_service_thread(void* arg)
@@ -104,12 +117,10 @@ void *camera_service_thread(void* arg)
 void signal_exit(void)
 {
     /* 여기에 구현하세요..  종료 메시지를 보내도록.. */
-	printf("<== system\n");
-	fflush(stdout);
-	pthread_mutex_lock(&system_loop_mutex);
-	system_loop_exit = true;
-	pthread_mutex_unlock(&system_loop_mutex);
-	pthread_cond_signal(&system_loop_cond);
+    pthread_mutex_lock(&system_loop_mutex);
+    system_loop_exit = true;
+    pthread_cond_broadcast(&system_loop_cond);
+    pthread_mutex_unlock(&system_loop_mutex);
 }
 
 int system_server()
@@ -139,11 +150,18 @@ int system_server()
 
     printf("system init done.  waiting...");
 
+    // 여기에 구현하세요... 여기서 cond wait로 대기한다. 10초 후 알람이 울리면 <== system 출력
     pthread_mutex_lock(&system_loop_mutex);
     while (system_loop_exit == false) {
         pthread_cond_wait(&system_loop_cond, &system_loop_mutex);
     }
     pthread_mutex_unlock(&system_loop_mutex);
+
+    printf("<== system\n");
+    // /* 1초 마다 wake-up 한다 */
+    while (system_loop_exit == false) {
+        sleep(1);
+    }
 
     while (1) {
         sleep(1);
