@@ -10,13 +10,20 @@
 #include <gui.h>
 #include <input.h>
 #include <web_server.h>
+#include <camera_HAL.h>
+
+pthread_mutex_t system_loop_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  system_loop_cond  = PTHREAD_COND_INITIALIZER;
+bool            system_loop_exit = false;    ///< true if main loop should exit
 
 static int toy_timer = 0;
 
+void signal_exit(void);
+
 static void timer_expire_signal_handler()
 {
-    // 이거 뮤텍스로 막아야 하나요?
     toy_timer++;
+    signal_exit();
 }
 
 void set_periodic_timer(long sec_delay, long usec_delay)
@@ -84,11 +91,25 @@ void *camera_service_thread(void* arg)
 
     printf("%s", s);
 
+   toy_camera_open();
+   toy_camera_take_picture();
+
     while (1) {
         posix_sleep_ms(5000);
     }
 
     return 0;
+}
+
+void signal_exit(void)
+{
+    /* 여기에 구현하세요..  종료 메시지를 보내도록.. */
+	printf("<== system\n");
+	fflush(stdout);
+	pthread_mutex_lock(&system_loop_mutex);
+	system_loop_exit = true;
+	pthread_mutex_unlock(&system_loop_mutex);
+	pthread_cond_signal(&system_loop_cond);
 }
 
 int system_server()
@@ -102,10 +123,9 @@ int system_server()
 
     printf("나 system_server 프로세스!\n");
 
-    /* 5초 타이머를 만들어 봅시다. */
     signal(SIGALRM, timer_expire_signal_handler);
-    /* 5초 타이머 등록 */
-    set_periodic_timer(5, 0);
+    /* 10초 타이머 등록 */
+    set_periodic_timer(10, 0);
 
     /* 스레드를 생성한다. */
     retcode = pthread_create(&watchdog_thread_tid, NULL, watchdog_thread, "watchdog thread\n");
@@ -118,12 +138,17 @@ int system_server()
     assert(retcode == 0);
 
     printf("system init done.  waiting...");
-    /* 1초 마다 wake-up 한다 */
+
+    pthread_mutex_lock(&system_loop_mutex);
+    while (system_loop_exit == false) {
+        pthread_cond_wait(&system_loop_cond, &system_loop_mutex);
+    }
+    pthread_mutex_unlock(&system_loop_mutex);
+
     while (1) {
         sleep(1);
     }
-   
-    printf("<== system\n");
+
     return 0;
 }
 
