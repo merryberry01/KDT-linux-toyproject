@@ -1,6 +1,7 @@
 #include <assert.h>
 #include <pthread.h>
 #include <stdio.h>
+#include <semaphore.h>
 #include <sys/prctl.h>
 #include <signal.h>
 #include <sys/time.h>
@@ -24,13 +25,42 @@ static mqd_t disk_queue;
 static mqd_t camera_queue;
 
 static int toy_timer = 0;
-
-void signal_exit(void);
+pthread_mutex_t toy_timer_mutex = PTHREAD_MUTEX_INITIALIZER;
+static sem_t global_timer_sem;
+static bool global_timer_stopped;
 
 static void timer_expire_signal_handler()
 {
+    // signal 문맥에서는 비동기 시그널 안전 함수(async-signal-safe function) 사용
+    // man signal 확인
+    // sem_post는 async-signal-safe function
+    // 여기서는 sem_post 사용
+    if(sem_post(&global_timer_sem) == -1)
+	    perror("sem_post() from timer_expire_signal_handler()");
+}
+
+static void system_timeout_handler()
+{
+    // 여기는 signal hander가 아니기 때문에 안전하게 mutex lock 사용 가능
+    pthread_mutex_lock(&toy_timer_mutex);
     toy_timer++;
-    signal_exit();
+    printf("toy_timer: %d\n", toy_timer);
+    pthread_mutex_unlock(&toy_timer_mutex);
+}
+
+static void *timer_thread(void *not_used)
+{
+    signal(SIGALRM, timer_expire_signal_handler);
+    set_periodic_timer(1, 1);
+    sem_init(&global_timer_sem, 0, 0);
+
+	while (!global_timer_stopped) {
+        // 아래 sleep을 sem_wait 함수를 사용하여 동기화 처리
+		if(sem_wait(&global_timer_sem) == -1)
+			perror("sem_wait() from timer_thread()");
+		system_timeout_handler();
+	}
+	return 0;
 }
 
 void set_periodic_timer(long sec_delay, long usec_delay)
@@ -60,13 +90,15 @@ void *watchdog_thread(void* arg)
     toy_msg_t msg;
 
     printf("%s", s);
-  
-    /* 여기에 구현하세요. */
-    while (1) {
-	    if((mqretcode = mq_receive(watchdog_queue, (char *)&msg, sizeof(msg), NULL)) == -1)
-		    perror("mq_receive() from watchdog_thread()");
-    }
 
+    while (1) {
+        mqretcode = (int)mq_receive(watchdog_queue, (void *)&msg, sizeof(toy_msg_t), 0);
+        assert(mqretcode >= 0);
+        printf("watchdog_thread: 메시지가 도착했습니다.\n");
+        printf("msg.type: %d\n", msg.msg_type);
+        printf("msg.param1: %d\n", msg.param1);
+        printf("msg.param2: %d\n", msg.param2);
+    }
 
     return 0;
 }
@@ -79,10 +111,13 @@ void *monitor_thread(void* arg)
 
     printf("%s", s);
 
-    /* 여기에 구현하세요. */
     while (1) {
-	    if((mqretcode = mq_receive(monitor_queue, (char *)&msg, sizeof(msg), NULL)) == -1)
-		    perror("mq_receive() from monitor_thread()");
+        mqretcode = (int)mq_receive(monitor_queue, (void *)&msg, sizeof(toy_msg_t), 0);
+        assert(mqretcode >= 0);
+        printf("monitor_thread: 메시지가 도착했습니다.\n");
+        printf("msg.type: %d\n", msg.msg_type);
+        printf("msg.param1: %d\n", msg.param1);
+        printf("msg.param2: %d\n", msg.param2);
     }
 
     return 0;
@@ -99,10 +134,25 @@ void *disk_service_thread(void* arg)
 
     printf("%s", s);
 
-    /* 여기에 구현하세요. */
     while (1) {
-	    if((mqretcode = mq_receive(disk_queue, (char *)&msg, sizeof(msg), NULL)) == -1)
-		    perror("mq_receive() from disk_thread()");
+        mqretcode = (int)mq_receive(disk_queue, (void *)&msg, sizeof(toy_msg_t), 0);
+        assert(mqretcode >= 0);
+        printf("disk_service_thread: 메시지가 도착했습니다.\n");
+        printf("msg.type: %d\n", msg.msg_type);
+        printf("msg.param1: %d\n", msg.param1);
+        printf("msg.param2: %d\n", msg.param2);
+
+        /* popen 사용하여 10초마다 disk 잔여량 출력
+         * popen으로 shell을 실행하면 성능과 보안 문제가 있음
+         * 향후 파일 관련 시스템 콜 시간에 개선,
+         * 하지만 가끔 빠르게 테스트 프로그램 또는 프로토 타입 시스템 작성 시 유용
+         */
+        apipe = popen(cmd, "r");
+        while (fgets( buf, 1024, apipe) ) {
+            printf("%s", buf);
+        }
+        pclose(apipe);
+
     }
 
     return 0;
@@ -118,15 +168,18 @@ void *camera_service_thread(void* arg)
 
     printf("%s", s);
 
-    toy_camera_open();
+   toy_camera_open();
 
     while (1) {
-	    if((mqretcode = mq_receive(camera_queue, (char *)&msg, sizeof(msg), NULL)) == -1)
-		    perror("mq_receive() from camera_thread()");
-	    printf("camera_service_thread: message received\n");
-	    printf("msg.type: %u\nmsg.param1: %u\nmsg.param2: %u\n", msg.msg_type, msg.param1, msg.param2);
-	    if(msg.msg_type == 1)
-		    toy_camera_take_picture();
+        mqretcode = (int)mq_receive(camera_queue, (void *)&msg, sizeof(toy_msg_t), 0);
+        assert(mqretcode >= 0);
+        printf("camera_service_thread: 메시지가 도착했습니다.\n");
+        printf("msg.type: %d\n", msg.msg_type);
+        printf("msg.param1: %d\n", msg.param1);
+        printf("msg.param2: %d\n", msg.param2);
+        if (msg.msg_type == CAMERA_TAKE_PICTURE) {
+            toy_camera_take_picture();
+        }
     }
 
     return 0;
@@ -149,24 +202,20 @@ int system_server()
     timer_t *tidlist;
     int retcode;
     pthread_t watchdog_thread_tid, monitor_thread_tid, disk_service_thread_tid, camera_service_thread_tid;
+    pthread_t timer_thread_tid;
 
     printf("나 system_server 프로세스!\n");
 
-    signal(SIGALRM, timer_expire_signal_handler);
-    /* 10초 타이머 등록 */
-    set_periodic_timer(10, 0);
 
-    /* 여기에 구현하세요. */
     /* 메시지 큐를 오픈한다. */
-    if((watchdog_queue = mq_open("/watchdog_queue", O_RDWR)) == -1)
-	    perror("mq_open(watchdog_queue) from system_server()");
-    if((monitor_queue = mq_open("/monitor_queue", O_RDWR)) == -1)
-	    perror("mq_open(monitor_queue) from system_server()");
-    if((disk_queue = mq_open("/disk_queue", O_RDWR)) == -1)
-	    perror("mq_open(disk_queue) from system_server()");
-    if((camera_queue = mq_open("/camera_queue", O_RDWR)) == -1)
-	    perror("mq_open(camera_queue) from system_server()");
-
+    watchdog_queue = mq_open("/watchdog_queue", O_RDWR);
+    assert(watchdog_queue != -1);
+    monitor_queue = mq_open("/monitor_queue", O_RDWR);
+    assert(monitor_queue != -1);
+    disk_queue = mq_open("/disk_queue", O_RDWR);
+    assert(disk_queue != -1);
+    camera_queue = mq_open("/camera_queue", O_RDWR);
+    assert(camera_queue != -1);
 
     /* 스레드를 생성한다. */
     retcode = pthread_create(&watchdog_thread_tid, NULL, watchdog_thread, "watchdog thread\n");
@@ -176,6 +225,8 @@ int system_server()
     retcode = pthread_create(&disk_service_thread_tid, NULL, disk_service_thread, "disk service thread\n");
     assert(retcode == 0);
     retcode = pthread_create(&camera_service_thread_tid, NULL, camera_service_thread, "camera service thread\n");
+    assert(retcode == 0);
+    retcode = pthread_create(&timer_thread_tid, NULL, timer_thread, "timer thread\n");
     assert(retcode == 0);
 
     printf("system init done.  waiting...");
