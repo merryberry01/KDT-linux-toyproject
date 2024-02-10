@@ -122,7 +122,6 @@ void *monitor_thread(void* arg)
     int shmid;
 
     printf("%s", s);
-    the_sensor_info = (shm_sensor_t *)malloc(sizeof(shm_sensor_t));
 
     while (1) {
         mqretcode = (int)mq_receive(monitor_queue, (void *)&msg, sizeof(toy_msg_t), 0);
@@ -133,18 +132,11 @@ void *monitor_thread(void* arg)
         printf("msg.param2: %d\n", msg.param2);
         if (msg.msg_type == SENSOR_DATA) {
             shmid = msg.param1;
-            // 이곳에 구현해 주세요.
-            // 시스템 V 공유 메모리 사용하여 공유 메모리 데이터를 출력
-            // 공유 메모리 키는 메시지 큐에서 받은 값을 사용.
-	    char *shmaddr = (char *)shmat(shmid, NULL, 0);
-	    if(shmaddr == (char *)-1)
-		    perror("shmat() from monitor_thread()");
-	    printf("monitor_thread: shared memory addr = %p\n", shmaddr);
-	    memcpy((void *)the_sensor_info, (void *) shmaddr, sizeof(shm_sensor_t));
-	    printf("shm_sensor_t.temp: %d\n", the_sensor_info->temp);
-	    printf("shm_sensor_t.press: %d\n", the_sensor_info->press);
-	    printf("shm_sensor_t.humidity: %d\n", the_sensor_info->humidity);
-	    shmdt(shmaddr);
+            the_sensor_info = toy_shm_attach(shmid);
+            printf("sensor temp: %d\n", the_sensor_info->temp);
+            printf("sensor info: %d\n", the_sensor_info->press);
+            printf("sensor humidity: %d\n", the_sensor_info->humidity);
+            toy_shm_detach(the_sensor_info);
         }
     }
 

@@ -11,6 +11,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <mqueue.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include <system_server.h>
 #include <gui.h>
@@ -40,8 +43,6 @@ static mqd_t monitor_queue;
 static mqd_t disk_queue;
 static mqd_t camera_queue;
 static shm_sensor_t *the_sensor_info = NULL;
-
-int shm_id[SHM_KEY_MAX - SHM_KEY_BASE];
 
 void segfault_handler(int sig_num, siginfo_t * info, void * ucontext) {
   void * array[50];
@@ -86,33 +87,25 @@ void *sensor_thread(void* arg)
     int mqretcode;
     char *s = arg;
     toy_msg_t msg;
-    // 여기 추가: 공유메모리 키
-    char *shmaddr = (char *)shmat(shm_id[0], NULL, 0);
-    if(shmaddr == (char *)-1)
-	    perror("shmat() in sensor_thread()");
+    int shmid = toy_shm_get_keyid(SHM_KEY_SENSOR);
 
     printf("%s", s);
 
-    the_sensor_info = (shm_sensor_t *)malloc(sizeof(shm_sensor_t));
     while (1) {
         posix_sleep_ms(5000);
-        // 여기에 구현해 주세요.
         // 현재 고도/온도/기압 정보를  SYS V shared memory에 저장 후
         // monitor thread에 메시지 전송한다.
-	the_sensor_info->temp = 30;
-	the_sensor_info->press = 1;
-	the_sensor_info->humidity = 40;
-	printf("sensor_thread: shared memory addr = %p\n", shmaddr);
-	memcpy((void*) shmaddr, (void *) the_sensor_info, sizeof(shm_sensor_t));
-        
+        if (the_sensor_info != NULL) {
+            the_sensor_info->temp = 35;
+            the_sensor_info->press = 55;
+            the_sensor_info->humidity = 80;
+        }
         msg.msg_type = 1;
-        msg.param1 = shm_id[0];
+        msg.param1 = shmid;
         msg.param2 = 0;
         mqretcode = mq_send(monitor_queue, (char *)&msg, sizeof(msg), 0);
         assert(mqretcode == 0);
     }
-
-    shmdt(shmaddr);
 
     return 0;
 }
@@ -125,6 +118,7 @@ int toy_send(char **args);
 int toy_mutex(char **args);
 int toy_shell(char **args);
 int toy_message_queue(char **args);
+int toy_read_elf_header(char **args);
 int toy_exit(char **args);
 
 char *builtin_str[] = {
@@ -132,6 +126,7 @@ char *builtin_str[] = {
     "mu",
     "sh",
     "mq",
+    "elf",
     "exit"
 };
 
@@ -140,6 +135,7 @@ int (*builtin_func[]) (char **) = {
     &toy_mutex,
     &toy_shell,
     &toy_message_queue,
+    &toy_read_elf_header,
     &toy_exit
 };
 
@@ -187,6 +183,46 @@ int toy_message_queue(char **args)
 
     return 1;
 }
+
+int toy_read_elf_header(char **args)
+{
+    int mqretcode;
+    toy_msg_t msg;
+    int in_fd;
+    char *contents = NULL;
+    size_t contents_sz;
+    struct stat st;
+    Elf64Hdr *map;
+
+    in_fd = open("./sample/sample.elf", O_RDONLY);
+	if ( in_fd < 0 ) {
+        printf("cannot open ./sample/sample.elf\n");
+        return 1;
+    }
+    /* 여기서 mmap을 이용하여 파일 내용을 읽으세요.
+     * fread 사용 X
+     */
+	if(fstat(in_fd, &st) == -1)
+		perror("fstat() from toy_read_elf_header()");
+	contents_sz = st.st_size;
+
+	if((contents = (char*)mmap(NULL, contents_sz, PROT_READ, MAP_PRIVATE, in_fd, 0)) == MAP_FAILED)
+		perror("mmap() from toy_read_elf_header()");
+
+	map = (Elf64Hdr*)malloc(sizeof(Elf64Hdr));
+	memcpy(map, contents, sizeof(Elf64Hdr));
+	printf("Real size: %ld\n", contents_sz);
+	printf("Object file type: %d\n", map->e_type);
+	printf("Architecture: %d\n", map->e_machine);
+	printf("Object file version: %d\n", map->e_version);
+	printf("Entry point virtual address: %ld\n", map->e_entry);
+	printf("Program header table file offset: %ld\n", map->e_phoff);
+
+	free(map);
+	close(in_fd);
+    return 1;
+}
+
 
 int toy_exit(char **args)
 {
@@ -326,9 +362,11 @@ int input()
     sigaction(SIGSEGV, &sa, NULL); /* ignore whether it works or not */
 
     /* 센서 정보를 공유하기 위한, 시스템 V 공유 메모리를 생성한다 */
-    // 여기에 구현해주세요....
-    if((shm_id[0] = shmget(SHM_KEY_SENSOR, sizeof(shm_sensor_t) * 20, IPC_CREAT)) == -1)
-	    perror("shmget() from input()");
+    the_sensor_info = (shm_sensor_t *)toy_shm_create(SHM_KEY_SENSOR, sizeof(shm_sensor_t));
+    if ( the_sensor_info == (void *)-1 ) {
+        the_sensor_info = NULL;
+        printf("Error in shm_create SHMID=%d SHM_KEY_SENSOR\n", SHM_KEY_SENSOR);
+    }
 
     /* 메시지 큐를 오픈 한다.
      * 하지만, 사실 fork로 생성했기 때문에 파일 디스크립터 공유되었음. 따따서, extern으로 사용 가능
