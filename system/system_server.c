@@ -25,6 +25,7 @@
 #include <camera_HAL.h>
 #include <toy_message.h>
 #include <shared_memory.h>
+// #include <dump_state.h>
 
 #define BUF_LEN 1024
 #define TOY_TEST_FS "./fs"
@@ -45,6 +46,44 @@ static bool global_timer_stopped;
 
 static shm_sensor_t *the_sensor_info = NULL;
 void set_periodic_timer(long sec_delay, long usec_delay);
+
+static void print_proc(const char *path){
+	int fd, rdsize;
+	char buf[BUF_LEN];
+
+	printf("----------------------------------------[%s]----------------------------------------\n", path);
+	if((fd = open(path, O_RDONLY | O_NONBLOCK)) == -1){
+		printf("path = %s\n", path);
+		perror("open() from print_proc()");
+	}
+	
+	while((rdsize = read(fd, buf, BUF_LEN)) > 0)
+		write(STDOUT_FILENO, buf, rdsize);
+	
+	if(rdsize < 0 && errno != EAGAIN){
+		printf("path = %s\n", path);
+		perror("read() from print_proc()");
+	}
+	else
+		printf("\n\n");
+	close(fd);
+}
+
+static void dumpstate(){
+	print_proc("/proc/version");
+	print_proc("/proc/meminfo");
+	print_proc("/proc/vmstat");
+	print_proc("/proc/vmallocinfo");
+	print_proc("/proc/slabinfo");
+	print_proc("/proc/zoneinfo");
+	print_proc("/proc/pagetypeinfo");
+	print_proc("/proc/buddyinfo");
+	print_proc("/dev/kmsg");
+	print_proc("/proc/net/dev");
+	print_proc("/proc/net/route");
+	print_proc("/proc/net/ipv6_route");
+	print_proc("/proc/interrupts");
+}
 
 static void timer_expire_signal_handler()
 {
@@ -126,6 +165,7 @@ void *watchdog_thread(void* arg)
 }
 
 #define SENSOR_DATA 1
+#define DUMP_STATE 2
 
 void *monitor_thread(void* arg)
 {
@@ -150,10 +190,46 @@ void *monitor_thread(void* arg)
             printf("sensor info: %d\n", the_sensor_info->press);
             printf("sensor humidity: %d\n", the_sensor_info->humidity);
             toy_shm_detach(the_sensor_info);
+        } else if (msg.msg_type == DUMP_STATE) {
+		dumpstate();
+        } else {
+            printf("monitor_thread: unknown message. xxx\n");
         }
     }
 
     return 0;
+}
+
+// https://stackoverflow.com/questions/21618260/how-to-get-total-size-of-subdirectories-in-c
+static long get_directory_size(char *dirname)
+{
+    DIR *dir = opendir(dirname);
+    if (dir == 0)
+        return 0;
+
+    struct dirent *dit;
+    struct stat st;
+    long size = 0;
+    long total_size = 0;
+    char filePath[1024];
+
+    while ((dit = readdir(dir)) != NULL) {
+        if ( (strcmp(dit->d_name, ".") == 0) || (strcmp(dit->d_name, "..") == 0) )
+            continue;
+
+        sprintf(filePath, "%s/%s", dirname, dit->d_name);
+        if (lstat(filePath, &st) != 0)
+            continue;
+        size = st.st_size;
+
+        if (S_ISDIR(st.st_mode)) {
+            long dir_size = get_directory_size(filePath) + size;
+            total_size += dir_size;
+        } else {
+            total_size += size;
+        }
+    }
+    return total_size;
 }
 
 
@@ -167,61 +243,34 @@ void *disk_service_thread(void* arg)
     struct inotify_event *event;
     char *directory = TOY_TEST_FS;
     int total_size;
-    DIR* dirp;
-    struct dirent *dp;
-    struct stat st;
 
     printf("%s", s);
 
-    // 여기에 구현
-    if((inotifyFd = inotify_init()) == -1)
-	    perror("inotify_init() from disk_service_thread()");
-    if((wd = inotify_add_watch(inotifyFd, directory, IN_ALL_EVENTS)) == -1)
-	    perror("inotify_add_watch() from disk_service_thread()");
+    inotifyFd = inotify_init();                 /* Create inotify instance */
+    if (inotifyFd == -1)
+        return 0;
 
-	while (1) {
-		numRead = read(wd, buf, BUF_LEN);
-		if(numRead == 0)
-			printf("read() returns 0 from disk_service_thread()");
-		else if(numRead == -1)
-			perror("read() from disk_service_thread()");
+    wd = inotify_add_watch(inotifyFd, TOY_TEST_FS, IN_CREATE);
+    if (wd == -1)
+        return 0;
 
-		printf("Read %ld bytes from inotify fd\n", numRead);
-		total_size = 0;
+    for (;;) {                                  /* Read events forever */
+        numRead = read(inotifyFd, buf, BUF_LEN);
+        if (numRead == 0) {
+            printf("read() from inotify fd returned 0!");
+            return 0;
+        }
 
-		if((dirp = opendir(directory)) == NULL)
-			perror("opendir() from disk_service_thread()");
-		
-		char *path = malloc(128);
-		while((dp = readdir(dirp)) != NULL){
-			sprintf(path, "./fs/%s", dp->d_name);
-			if(stat(path, &st) == -1)
-				perror("stat() from disk_service_thread()");
-			total_size += st.st_size;
-		}
-		free(path);
-		closedir(dirp);
-		
-		for(p = buf; p < buf + numRead; ){
-			if(stat(directory, &st) == -1)
-				perror("stat() from disk_service_thread()");
+        if (numRead == -1)
+            return 0;
 
-			printf("Directory size:\t\t %d\n", total_size);
-			printf("File type:\t\t Directory\n");
-			printf("Device container i-node: major=%d minor=%d\n", major(st.st_dev), minor(st.st_dev));
-			printf("I-node number:\t\t %ld\n", st.st_ino);
-			printf("number of (hard) links:\t %ld\n", st.st_nlink);
-			printf("Ownership:\t\t UID=%d GID=%d\n", st.st_uid, st.st_gid);
-			printf("File size:\t\t %ld\n", st.st_size);
-			printf("Optimal I/O block size:\t %ld\n", st.st_blksize);
-			printf("512B blocks allocate:\t %ld\n", st.st_blocks);
-			printf("Last file access:\t %s", ctime(&st.st_atime));
-			printf("Last file modification:\t %s", ctime(&st.st_mtime));
-			printf("Last file change:\t %s\n", ctime(&st.st_ctime));
-
-			p += sizeof(struct inotify_event) + ((struct inotify_event*)p)->len;
-		}
-	}
+        for (p = buf; p < buf + numRead; ) {
+            event = (struct inotify_event *) p;
+            p += sizeof(struct inotify_event) + event->len;
+        }
+        total_size = get_directory_size(TOY_TEST_FS);
+        printf("directory size: %d\n", total_size);
+    }
 
     return 0;
 }
@@ -247,6 +296,10 @@ void *camera_service_thread(void* arg)
         printf("msg.param2: %d\n", msg.param2);
         if (msg.msg_type == CAMERA_TAKE_PICTURE) {
             toy_camera_take_picture();
+        } else if (msg.msg_type == DUMP_STATE) {
+            toy_camera_dump();
+        } else {
+            printf("camera_service_thread: unknown message. xxx\n");
         }
     }
 
