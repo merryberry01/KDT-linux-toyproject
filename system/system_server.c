@@ -22,10 +22,10 @@
 #include <gui.h>
 #include <input.h>
 #include <web_server.h>
-#include <camera_HAL.h>
 #include <toy_message.h>
 #include <shared_memory.h>
-// #include <dump_state.h>
+#include <dump_state.h>
+#include <hardware.h>
 
 #define BUF_LEN 1024
 #define TOY_TEST_FS "./fs"
@@ -46,44 +46,6 @@ static bool global_timer_stopped;
 
 static shm_sensor_t *the_sensor_info = NULL;
 void set_periodic_timer(long sec_delay, long usec_delay);
-
-static void print_proc(const char *path){
-	int fd, rdsize;
-	char buf[BUF_LEN];
-
-	printf("----------------------------------------[%s]----------------------------------------\n", path);
-	if((fd = open(path, O_RDONLY | O_NONBLOCK)) == -1){
-		printf("path = %s\n", path);
-		perror("open() from print_proc()");
-	}
-	
-	while((rdsize = read(fd, buf, BUF_LEN)) > 0)
-		write(STDOUT_FILENO, buf, rdsize);
-	
-	if(rdsize < 0 && errno != EAGAIN){
-		printf("path = %s\n", path);
-		perror("read() from print_proc()");
-	}
-	else
-		printf("\n\n");
-	close(fd);
-}
-
-static void dumpstate(){
-	print_proc("/proc/version");
-	print_proc("/proc/meminfo");
-	print_proc("/proc/vmstat");
-	print_proc("/proc/vmallocinfo");
-	print_proc("/proc/slabinfo");
-	print_proc("/proc/zoneinfo");
-	print_proc("/proc/pagetypeinfo");
-	print_proc("/proc/buddyinfo");
-	print_proc("/dev/kmsg");
-	print_proc("/proc/net/dev");
-	print_proc("/proc/net/route");
-	print_proc("/proc/net/ipv6_route");
-	print_proc("/proc/interrupts");
-}
 
 static void timer_expire_signal_handler()
 {
@@ -191,7 +153,7 @@ void *monitor_thread(void* arg)
             printf("sensor humidity: %d\n", the_sensor_info->humidity);
             toy_shm_detach(the_sensor_info);
         } else if (msg.msg_type == DUMP_STATE) {
-		dumpstate();
+            dumpstate();
         } else {
             printf("monitor_thread: unknown message. xxx\n");
         }
@@ -282,10 +244,17 @@ void *camera_service_thread(void* arg)
     char *s = arg;
     int mqretcode;
     toy_msg_t msg;
+    hw_module_t *module = NULL;
+    int res;
 
     printf("%s", s);
-
-   toy_camera_open();
+    // 여기서 동적으로 심볼을 로딩 합니다.
+    res = hw_get_camera_module((const hw_module_t **)&module);
+    assert(res == 0);
+    printf("Camera module name: %s\n", module->name);
+    printf("Camera module tag: %08x\n", module->tag);
+    printf("Camera module id: %s\n", module->id);
+    module->open();
 
     while (1) {
         mqretcode = (int)mq_receive(camera_queue, (void *)&msg, sizeof(toy_msg_t), 0);
@@ -295,9 +264,9 @@ void *camera_service_thread(void* arg)
         printf("msg.param1: %d\n", msg.param1);
         printf("msg.param2: %d\n", msg.param2);
         if (msg.msg_type == CAMERA_TAKE_PICTURE) {
-            toy_camera_take_picture();
+            module->take_picture();
         } else if (msg.msg_type == DUMP_STATE) {
-            toy_camera_dump();
+            module->dump();
         } else {
             printf("camera_service_thread: unknown message. xxx\n");
         }
@@ -325,7 +294,6 @@ int system_server()
     pthread_t timer_thread_tid;
 
     printf("나 system_server 프로세스!\n");
-
 
     /* 메시지 큐를 오픈한다. */
     watchdog_queue = mq_open("/watchdog_queue", O_RDWR);

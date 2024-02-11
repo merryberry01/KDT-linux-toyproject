@@ -22,7 +22,7 @@
 #include <execinfo.h>
 #include <toy_message.h>
 #include <shared_memory.h>
-// #include <dump_state.h>
+#include <dump_state.h>
 
 #define TOY_TOK_BUFSIZE 64
 #define TOY_TOK_DELIM " \t\r\n\a"
