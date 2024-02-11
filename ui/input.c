@@ -92,7 +92,7 @@ void *sensor_thread(void* arg)
     printf("%s", s);
 
     while (1) {
-        posix_sleep_ms(5000);
+        posix_sleep_ms(10000);
         // 현재 고도/온도/기압 정보를  SYS V shared memory에 저장 후
         // monitor thread에 메시지 전송한다.
         if (the_sensor_info != NULL) {
@@ -202,24 +202,23 @@ int toy_read_elf_header(char **args)
     /* 여기서 mmap을 이용하여 파일 내용을 읽으세요.
      * fread 사용 X
      */
-	if(fstat(in_fd, &st) == -1)
-		perror("fstat() from toy_read_elf_header()");
-	contents_sz = st.st_size;
 
-	if((contents = (char*)mmap(NULL, contents_sz, PROT_READ, MAP_PRIVATE, in_fd, 0)) == MAP_FAILED)
-		perror("mmap() from toy_read_elf_header()");
+    if (!fstat(in_fd, &st)) {
+        contents_sz = st.st_size;
+        if (!contents_sz) {
+            printf("./sample/sample.elf is empty\n");
+            return 1;
+        }
+        printf("real size: %ld\n", contents_sz);
+        map = (Elf64Hdr *)mmap(NULL, contents_sz, PROT_READ, MAP_PRIVATE, in_fd, 0);
+        printf("Object file type : %d\n", map->e_type);
+        printf("Architecture : %d\n", map->e_machine);
+        printf("Object file version : %d\n", map->e_version);
+        printf("Entry point virtual address : %ld\n", map->e_entry);
+        printf("Program header table file offset : %ld\n", map->e_phoff);
+        munmap(map, contents_sz);
+    }
 
-	map = (Elf64Hdr*)malloc(sizeof(Elf64Hdr));
-	memcpy(map, contents, sizeof(Elf64Hdr));
-	printf("Real size: %ld\n", contents_sz);
-	printf("Object file type: %d\n", map->e_type);
-	printf("Architecture: %d\n", map->e_machine);
-	printf("Object file version: %d\n", map->e_version);
-	printf("Entry point virtual address: %ld\n", map->e_entry);
-	printf("Program header table file offset: %ld\n", map->e_phoff);
-
-	free(map);
-	close(in_fd);
     return 1;
 }
 

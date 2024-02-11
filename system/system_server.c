@@ -7,6 +7,16 @@
 #include <sys/time.h>
 #include <time.h>
 #include <mqueue.h>
+#include <sys/inotify.h>
+#include <limits.h>
+#include <sys/stat.h>
+#include <time.h>
+#include <sys/sysmacros.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <stdint.h>
+#include <string.h>
+#include <dirent.h>
 
 #include <system_server.h>
 #include <gui.h>
@@ -15,6 +25,9 @@
 #include <camera_HAL.h>
 #include <toy_message.h>
 #include <shared_memory.h>
+
+#define BUF_LEN 1024
+#define TOY_TEST_FS "./fs"
 
 pthread_mutex_t system_loop_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t  system_loop_cond  = PTHREAD_COND_INITIALIZER;
@@ -143,37 +156,72 @@ void *monitor_thread(void* arg)
     return 0;
 }
 
+
 void *disk_service_thread(void* arg)
 {
     char *s = arg;
-    FILE* apipe;
-    char buf[1024];
-    char cmd[]="df -h ./" ;
-    int mqretcode;
-    toy_msg_t msg;
+    int inotifyFd, wd, j;
+    char buf[BUF_LEN] __attribute__ ((aligned(8)));
+    ssize_t numRead;
+    char *p;
+    struct inotify_event *event;
+    char *directory = TOY_TEST_FS;
+    int total_size;
+    DIR* dirp;
+    struct dirent *dp;
+    struct stat st;
 
     printf("%s", s);
 
-    while (1) {
-        mqretcode = (int)mq_receive(disk_queue, (void *)&msg, sizeof(toy_msg_t), 0);
-        assert(mqretcode >= 0);
-        printf("disk_service_thread: 메시지가 도착했습니다.\n");
-        printf("msg.type: %d\n", msg.msg_type);
-        printf("msg.param1: %d\n", msg.param1);
-        printf("msg.param2: %d\n", msg.param2);
+    // 여기에 구현
+    if((inotifyFd = inotify_init()) == -1)
+	    perror("inotify_init() from disk_service_thread()");
+    if((wd = inotify_add_watch(inotifyFd, directory, IN_ALL_EVENTS)) == -1)
+	    perror("inotify_add_watch() from disk_service_thread()");
 
-        /* popen 사용하여 10초마다 disk 잔여량 출력
-         * popen으로 shell을 실행하면 성능과 보안 문제가 있음
-         * 향후 파일 관련 시스템 콜 시간에 개선,
-         * 하지만 가끔 빠르게 테스트 프로그램 또는 프로토 타입 시스템 작성 시 유용
-         */
-        apipe = popen(cmd, "r");
-        while (fgets( buf, 1024, apipe) ) {
-            printf("%s", buf);
-        }
-        pclose(apipe);
+	while (1) {
+		numRead = read(wd, buf, BUF_LEN);
+		if(numRead == 0)
+			printf("read() returns 0 from disk_service_thread()");
+		else if(numRead == -1)
+			perror("read() from disk_service_thread()");
 
-    }
+		printf("Read %ld bytes from inotify fd\n", numRead);
+		total_size = 0;
+
+		if((dirp = opendir(directory)) == NULL)
+			perror("opendir() from disk_service_thread()");
+		
+		char *path = malloc(128);
+		while((dp = readdir(dirp)) != NULL){
+			sprintf(path, "./fs/%s", dp->d_name);
+			if(stat(path, &st) == -1)
+				perror("stat() from disk_service_thread()");
+			total_size += st.st_size;
+		}
+		free(path);
+		closedir(dirp);
+		
+		for(p = buf; p < buf + numRead; ){
+			if(stat(directory, &st) == -1)
+				perror("stat() from disk_service_thread()");
+
+			printf("Directory size:\t\t %d\n", total_size);
+			printf("File type:\t\t Directory\n");
+			printf("Device container i-node: major=%d minor=%d\n", major(st.st_dev), minor(st.st_dev));
+			printf("I-node number:\t\t %ld\n", st.st_ino);
+			printf("number of (hard) links:\t %ld\n", st.st_nlink);
+			printf("Ownership:\t\t UID=%d GID=%d\n", st.st_uid, st.st_gid);
+			printf("File size:\t\t %ld\n", st.st_size);
+			printf("Optimal I/O block size:\t %ld\n", st.st_blksize);
+			printf("512B blocks allocate:\t %ld\n", st.st_blocks);
+			printf("Last file access:\t %s", ctime(&st.st_atime));
+			printf("Last file modification:\t %s", ctime(&st.st_mtime));
+			printf("Last file change:\t %s\n", ctime(&st.st_ctime));
+
+			p += sizeof(struct inotify_event) + ((struct inotify_event*)p)->len;
+		}
+	}
 
     return 0;
 }
