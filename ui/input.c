@@ -400,16 +400,26 @@ int input()
     sigaction(SIGSEGV, &sa, NULL); /* ignore whether it works or not */
 
     // 여기에 seccomp 을 이용해서 mincore 시스템 콜을 막아 주세요.
-    if((ctx = seccomp_init(SCMP_ACT_ALLOW)) == NULL)
-        perror("seccomp_init() from input()");
-    if(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(mincore), 0) != 0)
-        perror("seccomp_rule_add() from input()");
-    
+    ctx = seccomp_init(SCMP_ACT_ALLOW);
+    if (ctx == NULL) {
+        printf("seccomp_init failed");
+        return -1;
+    }
+
+    int rc = seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(mincore), 0);
+    if (rc < 0) {
+        printf("seccomp_rule_add failed");
+        return -1;
+    }
+
     seccomp_export_pfc(ctx, 5);
     seccomp_export_bpf(ctx, 6);
 
-    if(seccomp_load(ctx) != 0)
-        perror("seccomp_load() from input()");
+    rc = seccomp_load(ctx);
+    if (rc < 0) {
+        printf("seccomp_load failed");
+        return -1;
+    }
     seccomp_release(ctx);
 
     /* 센서 정보를 공유하기 위한, 시스템 V 공유 메모리를 생성한다 */
