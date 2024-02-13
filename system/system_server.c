@@ -248,11 +248,11 @@ void *camera_service_thread(void* arg)
     int res;
 
     printf("%s", s);
-    // 여기서 동적으로 심볼을 로딩 합니다.
+
     res = hw_get_camera_module((const hw_module_t **)&module);
     assert(res == 0);
     printf("Camera module name: %s\n", module->name);
-    printf("Camera module tag: %08x\n", module->tag);
+    printf("Camera module tag: %d\n", module->tag);
     printf("Camera module id: %s\n", module->id);
     module->open();
 

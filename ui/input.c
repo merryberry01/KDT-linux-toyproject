@@ -14,6 +14,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <sys/mman.h>
+#include <seccomp.h>
 
 #include <system_server.h>
 #include <gui.h>
@@ -122,6 +124,7 @@ int toy_shell(char **args);
 int toy_message_queue(char **args);
 int toy_read_elf_header(char **args);
 int toy_dump_state(char **args);
+int toy_mincore(char **args);
 int toy_exit(char **args);
 
 char *builtin_str[] = {
@@ -131,6 +134,7 @@ char *builtin_str[] = {
     "mq",
     "elf",
     "dump",
+    "mincore",
     "exit"
 };
 
@@ -141,6 +145,7 @@ int (*builtin_func[]) (char **) = {
     &toy_message_queue,
     &toy_read_elf_header,
     &toy_dump_state,
+    &toy_mincore,
     &toy_exit
 };
 
@@ -239,6 +244,19 @@ int toy_dump_state(char **args)
     assert(mqretcode == 0);
     mqretcode = mq_send(monitor_queue, (char *)&msg, sizeof(msg), 0);
     assert(mqretcode == 0);
+
+    return 1;
+}
+
+int toy_mincore(char **args)
+{
+    unsigned char vec[20];
+    int res;
+    size_t page = sysconf(_SC_PAGESIZE);
+    void *addr = mmap(NULL, 20 * page, PROT_READ | PROT_WRITE,
+                    MAP_NORESERVE | MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+    res = mincore(addr, 10 * page, vec);
+    assert(res == 0);
 
     return 1;
 }
@@ -369,6 +387,7 @@ int input()
     struct sigaction sa;
     pthread_t command_thread_tid, sensor_thread_tid;
     int i;
+    scmp_filter_ctx ctx;
 
     printf("나 input 프로세스!\n");
 
@@ -379,6 +398,19 @@ int input()
     sa.sa_sigaction = segfault_handler;
 
     sigaction(SIGSEGV, &sa, NULL); /* ignore whether it works or not */
+
+    // 여기에 seccomp 을 이용해서 mincore 시스템 콜을 막아 주세요.
+    if((ctx = seccomp_init(SCMP_ACT_ALLOW)) == NULL)
+        perror("seccomp_init() from input()");
+    if(seccomp_rule_add(ctx, SCMP_ACT_ERRNO(EPERM), SCMP_SYS(mincore), 0) != 0)
+        perror("seccomp_rule_add() from input()");
+    
+    seccomp_export_pfc(ctx, 5);
+    seccomp_export_bpf(ctx, 6);
+
+    if(seccomp_load(ctx) != 0)
+        perror("seccomp_load() from input()");
+    seccomp_release(ctx);
 
     /* 센서 정보를 공유하기 위한, 시스템 V 공유 메모리를 생성한다 */
     the_sensor_info = (shm_sensor_t *)toy_shm_create(SHM_KEY_SENSOR, sizeof(shm_sensor_t));

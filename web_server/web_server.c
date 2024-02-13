@@ -1,4 +1,7 @@
 #include <stdio.h>
+#include <errno.h>
+#include <stdio.h>
+#include <unistd.h>
 
 #include <system_server.h>
 #include <gui.h>
